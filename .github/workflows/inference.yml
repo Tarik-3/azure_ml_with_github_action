@@ -152,36 +152,9 @@ jobs:
 
       - name: Validate and prepare data
         run: |
-          mkdir -p outputs/inference_data
-          python -c "
-            import pandas as pd
-            import sys
-            from pathlib import Path
-
-            try:
-                # Load raw data
-                df = pd.read_csv('${{ steps.input.outputs.file }}')
-                print(f'Loaded {len(df)} rows, {len(df.columns)} columns')
-                print(f'Columns: {list(df.columns)}')
-                
-                # Check for missing values
-                missing = df.isnull().sum()
-                if missing.any():
-                    print(f'Warning: Missing values found')
-                    print(missing[missing > 0])
-                    # Drop rows with missing values
-                    df = df.dropna()
-                    print(f'After cleaning: {len(df)} rows')
-                
-                # Save cleaned data
-                output_file = Path('outputs/inference_data/cleaned_data.csv')
-                df.to_csv(output_file, index=False)
-                print(f'[SUCCESS] Cleaned data saved to {output_file}')
-                
-            except Exception as e:
-                print(f'[ERROR] Failed to prepare data: {e}')
-                sys.exit(1)
-            "
+          python prepare_inference_data.py \
+            --input "${{ steps.input.outputs.file }}" \
+            --output outputs/inference_data
 
       - name: Upload cleaned data
         uses: actions/upload-artifact@v4
