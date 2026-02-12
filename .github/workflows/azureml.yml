@@ -27,7 +27,7 @@ jobs:
           python prep.py --input data/sample_data.csv --output outputs/prep_output
 
       - name: Upload prepared data
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: prep-output
           path: outputs/prep_output/
@@ -49,7 +49,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Download prepared data
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: prep-output
           path: outputs/prep_output/
@@ -60,7 +60,7 @@ jobs:
           python train.py --input outputs/prep_output --output outputs/train_output
 
       - name: Upload trained model
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: train-output
           path: outputs/train_output/
@@ -82,13 +82,13 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Download prepared data
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: prep-output
           path: outputs/prep_output/
 
       - name: Download trained model
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: train-output
           path: outputs/train_output/
@@ -98,7 +98,7 @@ jobs:
           python test.py --input outputs/prep_output --model outputs/train_output
 
       - name: Upload metrics
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: metrics
           path: outputs/metrics.json
@@ -110,7 +110,7 @@ jobs:
     if: always()
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
 
       - name: Display structure
         run: |
@@ -122,11 +122,11 @@ jobs:
         run: |
           echo "## Pipeline Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ **Prepare Data**: Completed" >> $GITHUB_STEP_SUMMARY
-          echo "✅ **Train Model**: Completed" >> $GITHUB_STEP_SUMMARY
-          echo "✅ **Test Model**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "[SUCCESS] **Prepare Data**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "[SUCCESS] **Train Model**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "[SUCCESS] **Test Model**: Completed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📊 **Artifacts**:" >> $GITHUB_STEP_SUMMARY
+          echo "**Artifacts**:" >> $GITHUB_STEP_SUMMARY
           echo "- prep-output: Prepared training/test data" >> $GITHUB_STEP_SUMMARY
           echo "- train-output: Trained model and metadata" >> $GITHUB_STEP_SUMMARY
           echo "- metrics: Model evaluation metrics" >> $GITHUB_STEP_SUMMARY
