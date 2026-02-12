@@ -17,9 +17,118 @@ on:
         type: string
 
 jobs:
+  check-and-train:
+    name: Check Model / Auto-Train if Needed
+    runs-on: ubuntu-latest
+    outputs:
+      model_exists: ${{ steps.check.outputs.exists }}
+      trained: ${{ steps.train.outputs.completed }}
+    steps:
+      - name: Check if model exists
+        id: check
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: azureml.yml
+          name: train-output
+          path: model_check/
+          search_artifacts: true
+          workflow_conclusion: success
+
+      - name: Set model existence flag
+        id: set_flag
+        run: |
+          if [ "${{ steps.check.outcome }}" = "success" ] && [ -f model_check/model.pkl ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Model found - will proceed with inference"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️ No model found - will trigger training pipeline first"
+          fi
+
+      - name: Trigger Training Pipeline
+        id: train
+        if: steps.set_flag.outputs.exists == 'false'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            console.log('🚀 No trained model found. Triggering Training Pipeline...');
+            
+            // Trigger the training workflow
+            const response = await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'azureml.yml',
+              ref: 'main',
+              inputs: {
+                retrain_reason: 'Auto-triggered by Inference Pipeline (no model found)'
+              }
+            });
+            
+            console.log('✅ Training pipeline triggered successfully');
+            console.log('⏳ Waiting for training to complete...');
+            
+            // Wait a bit for the workflow to start
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            // Poll for the workflow run to complete
+            const maxAttempts = 60; // 10 minutes (60 * 10 seconds)
+            let attempts = 0;
+            let workflowRun = null;
+            
+            while (attempts < maxAttempts) {
+              // Get recent workflow runs
+              const runs = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'azureml.yml',
+                per_page: 5
+              });
+              
+              // Find the most recent run that was triggered
+              workflowRun = runs.data.workflow_runs.find(run => 
+                run.status !== 'completed' || 
+                (new Date(run.created_at) > new Date(Date.now() - 30000))
+              );
+              
+              if (workflowRun && workflowRun.status === 'completed') {
+                if (workflowRun.conclusion === 'success') {
+                  console.log('✅ Training pipeline completed successfully!');
+                  core.setOutput('completed', 'true');
+                  return;
+                } else {
+                  core.setFailed(`Training pipeline failed with conclusion: ${workflowRun.conclusion}`);
+                  return;
+                }
+              }
+              
+              console.log(`⏳ Still waiting... (attempt ${attempts + 1}/${maxAttempts})`);
+              await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+              attempts++;
+            }
+            
+            core.setFailed('Training pipeline did not complete within the expected time');
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Model Check Results" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.set_flag.outputs.exists }}" = "true" ]; then
+            echo "✅ **Model found** - Proceeding with inference" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **No model found** - Training pipeline was triggered" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ steps.train.outputs.completed }}" = "true" ]; then
+              echo "✅ **Training completed successfully** - Inference will now proceed" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ **Training failed or timed out** - Inference cannot proceed" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
   prepare-inference-data:
     name: Prepare Raw Data
     runs-on: ubuntu-latest
+    needs: check-and-train
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -83,7 +192,7 @@ except Exception as e:
   get-model:
     name: Get Trained Model
     runs-on: ubuntu-latest
-    needs: prepare-inference-data
+    needs: [check-and-train, prepare-inference-data]
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -95,6 +204,7 @@ except Exception as e:
           name: train-output
           path: models/
           search_artifacts: true
+          workflow_conclusion: success
 
       - name: Verify model
         run: |
@@ -102,7 +212,7 @@ except Exception as e:
             echo "[ERROR] Model file not found"
             exit 1
           fi
-          echo "[SUCCESS] Model loaded successfully"
+          echo "✅ Model loaded successfully"
           ls -lh models/
 
       - name: Upload model
@@ -160,13 +270,30 @@ except Exception as e:
     if: always()
     steps:
       - name: Download all artifacts
+        continue-on-error: true
         uses: actions/download-artifact@v4
 
       - name: Display results
         run: |
-          echo "[SUCCESS] Inference pipeline completed!"
-          echo "=== Artifacts ==="
-          ls -R
+          if [ "${{ needs.get-model.result }}" != "success" ]; then
+            echo "============================================================"
+            echo "INFERENCE PIPELINE STOPPED"
+            echo "============================================================"
+            echo "Reason: No trained model found"
+            echo ""
+            echo "Next steps:"
+            echo "1. Go to Actions > Training Pipeline"
+            echo "2. Click 'Run workflow' to train a model"
+            echo "3. After training completes, run this inference pipeline again"
+            echo "============================================================"
+          elif [ "${{ needs.predict.result }}" = "success" ]; then
+            echo "[SUCCESS] Inference pipeline completed!"
+            echo "=== Artifacts ==="
+            ls -R
+          else
+            echo "[WARNING] Pipeline completed with issues"
+            ls -R
+          fi
 
       - name: Create summary
         run: |
@@ -175,17 +302,48 @@ except Exception as e:
           echo "**Run Number**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          if [ -f predictions/prediction_summary.json ]; then
+          if [ "${{ needs.check-and-train.outputs.model_exists }}" = "false" ]; then
+            echo "### 🔄 Auto-Training Triggered" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "No model was found, so the **Training Pipeline** was automatically triggered." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ needs.check-and-train.outputs.trained }}" = "true" ]; then
+              echo "✅ **Training completed successfully!** The newly trained model was used for inference." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ **Training failed or timed out.** Inference could not proceed." >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Please check the Training Pipeline run logs for details." >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.get-model.result }}" != "success" ]; then
+            echo "### Status: STOPPED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> **No trained model found!**" >> $GITHUB_STEP_SUMMARY
+            echo ">" >> $GITHUB_STEP_SUMMARY
+            echo "> Please run the **Training Pipeline** first:" >> $GITHUB_STEP_SUMMARY
+            echo "> 1. Go to Actions tab" >> $GITHUB_STEP_SUMMARY
+            echo "> 2. Select 'Training Pipeline'" >> $GITHUB_STEP_SUMMARY
+            echo "> 3. Click 'Run workflow'" >> $GITHUB_STEP_SUMMARY
+            echo "> 4. Wait for completion" >> $GITHUB_STEP_SUMMARY
+            echo "> 5. Run inference pipeline again" >> $GITHUB_STEP_SUMMARY
+          elif [ -f predictions/prediction_summary.json ]; then
+            echo "### Status: SUCCESS" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Prediction Statistics" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
             cat predictions/prediction_summary.json >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+            echo "- **inference-data**: Cleaned input data" >> $GITHUB_STEP_SUMMARY
+            echo "- **model**: Trained model used for predictions" >> $GITHUB_STEP_SUMMARY
+            echo "- **predictions**: Prediction results and statistics" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Status: FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Check job logs for details" >> $GITHUB_STEP_SUMMARY
           fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
-          echo "- **inference-data**: Cleaned input data" >> $GITHUB_STEP_SUMMARY
-          echo "- **model**: Trained model used for predictions" >> $GITHUB_STEP_SUMMARY
-          echo "- **predictions**: Prediction results and statistics" >> $GITHUB_STEP_SUMMARY
