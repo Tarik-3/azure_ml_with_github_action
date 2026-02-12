@@ -1,9 +1,13 @@
-name: ML Pipeline
+name: Training Pipeline
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      retrain_reason:
+        description: 'Reason for retraining the model'
+        required: false
+        default: 'Manual retrain'
+        type: string
 
 jobs:
   prepare-data:

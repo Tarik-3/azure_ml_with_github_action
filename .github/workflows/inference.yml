@@ -1,6 +1,13 @@
 name: Inference Pipeline
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'data/**'
+      - 'predict.py'
+      - '.github/workflows/inference.yml'
   workflow_dispatch:
     inputs:
       data_file:
@@ -10,8 +17,8 @@ on:
         type: string
 
 jobs:
-  predict:
-    name: Make Predictions
+  prepare-inference-data:
+    name: Prepare Raw Data
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -25,6 +32,62 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Determine input file
+        id: input
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "file=${{ github.event.inputs.data_file }}" >> $GITHUB_OUTPUT
+          else
+            echo "file=data/new_data.csv" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate and prepare data
+        run: |
+          mkdir -p outputs/inference_data
+          python -c "
+import pandas as pd
+import sys
+from pathlib import Path
+
+try:
+    # Load raw data
+    df = pd.read_csv('${{ steps.input.outputs.file }}')
+    print(f'Loaded {len(df)} rows, {len(df.columns)} columns')
+    print(f'Columns: {list(df.columns)}')
+    
+    # Check for missing values
+    missing = df.isnull().sum()
+    if missing.any():
+        print(f'Warning: Missing values found')
+        print(missing[missing > 0])
+        # Drop rows with missing values
+        df = df.dropna()
+        print(f'After cleaning: {len(df)} rows')
+    
+    # Save cleaned data
+    output_file = Path('outputs/inference_data/cleaned_data.csv')
+    df.to_csv(output_file, index=False)
+    print(f'[SUCCESS] Cleaned data saved to {output_file}')
+    
+except Exception as e:
+    print(f'[ERROR] Failed to prepare data: {e}')
+    sys.exit(1)
+"
+
+      - name: Upload cleaned data
+        uses: actions/upload-artifact@v4
+        with:
+          name: inference-data
+          path: outputs/inference_data/
+
+  get-model:
+    name: Get Trained Model
+    runs-on: ubuntu-latest
+    needs: prepare-inference-data
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
       - name: Download latest model
         uses: dawidd6/action-download-artifact@v3
         with:
@@ -33,37 +96,96 @@ jobs:
           path: models/
           search_artifacts: true
 
-      - name: Verify input data exists
+      - name: Verify model
         run: |
-          if [ ! -f "${{ github.event.inputs.data_file }}" ]; then
-            echo "Error: Data file not found at ${{ github.event.inputs.data_file }}"
+          if [ ! -f "models/model.pkl" ]; then
+            echo "[ERROR] Model file not found"
             exit 1
           fi
-          echo "Data file found: ${{ github.event.inputs.data_file }}"
+          echo "[SUCCESS] Model loaded successfully"
+          ls -lh models/
+
+      - name: Upload model
+        uses: actions/upload-artifact@v4
+        with:
+          name: model
+          path: models/
+
+  predict:
+    name: Make Predictions
+    runs-on: ubuntu-latest
+    needs: [prepare-inference-data, get-model]
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download cleaned data
+        uses: actions/download-artifact@v4
+        with:
+          name: inference-data
+          path: outputs/inference_data/
+
+      - name: Download model
+        uses: actions/download-artifact@v4
+        with:
+          name: model
+          path: models/
 
       - name: Run predictions
         run: |
           mkdir -p outputs/predictions
           python predict.py \
             --model models \
-            --input "${{ github.event.inputs.data_file }}" \
+            --input outputs/inference_data/cleaned_data.csv \
             --output outputs/predictions
 
       - name: Upload predictions
         uses: actions/upload-artifact@v4
         with:
-          name: predictions-${{ github.run_number }}
+          name: predictions
           path: outputs/predictions/
+
+  results:
+    name: Summarize Results
+    runs-on: ubuntu-latest
+    needs: [prepare-inference-data, get-model, predict]
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Display results
+        run: |
+          echo "[SUCCESS] Inference pipeline completed!"
+          echo "=== Artifacts ==="
+          ls -R
 
       - name: Create summary
         run: |
-          echo "## Prediction Results" >> $GITHUB_STEP_SUMMARY
+          echo "## Inference Pipeline Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Input Data**: \`${{ github.event.inputs.data_file }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Run Number**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f outputs/predictions/prediction_summary.json ]; then
-            echo "### Summary Statistics" >> $GITHUB_STEP_SUMMARY
-            cat outputs/predictions/prediction_summary.json >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f predictions/prediction_summary.json ]; then
+            echo "### Prediction Statistics" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+            cat predictions/prediction_summary.json >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           fi
+          
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Artifacts**: Download \`predictions-${{ github.run_number }}\` to see full results" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- **inference-data**: Cleaned input data" >> $GITHUB_STEP_SUMMARY
+          echo "- **model**: Trained model used for predictions" >> $GITHUB_STEP_SUMMARY
+          echo "- **predictions**: Prediction results and statistics" >> $GITHUB_STEP_SUMMARY
