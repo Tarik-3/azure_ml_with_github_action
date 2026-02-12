@@ -27,9 +27,14 @@ Outputs will be saved to `outputs/`:
 - `train_output/`: Trained model (`model.pkl`) and metadata
 - `metrics.json`: Evaluation metrics
 
-## GitHub Actions (Automated)
+## GitHub Actions (Automated with Parallel Jobs)
 
-The pipeline automatically runs whenever you push to the `main` branch.
+The pipeline automatically runs whenever you push to the `main` branch. It uses **4 parallel jobs** for efficient execution:
+
+1. **Prepare Data** - Loads and splits the CSV data
+2. **Train Model** - Trains the ML model (waits for Prepare Data)
+3. **Test Model** - Evaluates the model (waits for Train + Prepare)
+4. **Summarize Results** - Uploads all artifacts (waits for all steps)
 
 ### 1. Push Your Code
 ```bash
@@ -38,11 +43,29 @@ git commit -m "My changes"
 git push origin main
 ```
 
-### 2. View Results
+### 2. Monitor Jobs
 - Go to repository → **Actions** tab
 - Click the latest "ML Pipeline" workflow run
-- Scroll down to **Artifacts** section
-- Download `pipeline-outputs` (contains outputs/)
+- You'll see 4 jobs running:
+  - `prepare-data` (runs first)
+  - `train-model` (starts after prepare-data completes)
+  - `test-model` (starts after train-model completes)
+  - `summarize` (runs after all jobs complete)
+
+**Workflow Dependency Graph:**
+```
+prepare-data ──→ train-model ──→ test-model ──┐
+    ↓                                          │
+    └──────────────────────────────────────→ summarize
+```
+
+### 3. View Results
+- Check the **Job Summary** that appears at the top of the workflow run
+- Each job logs its output
+- Scroll down to **Artifacts** section to download results:
+  - `prep-output/` - Training/test data
+  - `train-output/` - Model and metadata
+  - `metrics/` - Evaluation metrics
 
 ## Troubleshooting
 

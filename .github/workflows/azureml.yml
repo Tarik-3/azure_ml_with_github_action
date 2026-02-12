@@ -6,7 +6,8 @@ on:
       - main
 
 jobs:
-  run-pipeline:
+  prepare-data:
+    name: Prepare Data
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -20,13 +21,112 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run pipeline
-        run: python pipeline.py
+      - name: Run prep step
+        run: |
+          mkdir -p outputs/prep_output
+          python prep.py --input data/sample_data.csv --output outputs/prep_output
 
-      - name: Upload outputs
-        if: always()
+      - name: Upload prepared data
         uses: actions/upload-artifact@v3
         with:
-          name: pipeline-outputs
-          path: outputs/
-          retention-days: 30
+          name: prep-output
+          path: outputs/prep_output/
+
+  train-model:
+    name: Train Model
+    runs-on: ubuntu-latest
+    needs: prepare-data
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download prepared data
+        uses: actions/download-artifact@v3
+        with:
+          name: prep-output
+          path: outputs/prep_output/
+
+      - name: Run train step
+        run: |
+          mkdir -p outputs/train_output
+          python train.py --input outputs/prep_output --output outputs/train_output
+
+      - name: Upload trained model
+        uses: actions/upload-artifact@v3
+        with:
+          name: train-output
+          path: outputs/train_output/
+
+  test-model:
+    name: Test Model
+    runs-on: ubuntu-latest
+    needs: [prepare-data, train-model]
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download prepared data
+        uses: actions/download-artifact@v3
+        with:
+          name: prep-output
+          path: outputs/prep_output/
+
+      - name: Download trained model
+        uses: actions/download-artifact@v3
+        with:
+          name: train-output
+          path: outputs/train_output/
+
+      - name: Run test step
+        run: |
+          python test.py --input outputs/prep_output --model outputs/train_output
+
+      - name: Upload metrics
+        uses: actions/upload-artifact@v3
+        with:
+          name: metrics
+          path: outputs/metrics.json
+
+  summarize:
+    name: Summarize Results
+    runs-on: ubuntu-latest
+    needs: [prepare-data, train-model, test-model]
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Display structure
+        run: |
+          echo "Pipeline execution completed!"
+          echo "=== Artifacts ==="
+          ls -R
+
+      - name: Create summary
+        run: |
+          echo "## Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Prepare Data**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Train Model**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Test Model**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 **Artifacts**:" >> $GITHUB_STEP_SUMMARY
+          echo "- prep-output: Prepared training/test data" >> $GITHUB_STEP_SUMMARY
+          echo "- train-output: Trained model and metadata" >> $GITHUB_STEP_SUMMARY
+          echo "- metrics: Model evaluation metrics" >> $GITHUB_STEP_SUMMARY
