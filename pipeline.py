@@ -23,7 +23,7 @@ prep_step = PythonScriptStep(
     script_name="prep.py",
     arguments=["--output", prepared_data],
     outputs=[prepared_data],
-    compute_target="cpu-cluster",   # Make sure this compute cluster exists in your workspace
+    compute_target="pipe-action",   # Make sure this compute cluster exists in your workspace
     source_directory=".",
     runconfig=ScriptRunConfig(source_directory=".", environment=env)
 )
@@ -35,7 +35,7 @@ train_step = PythonScriptStep(
     arguments=["--input", prepared_data, "--model_output", model_output],
     inputs=[prepared_data],
     outputs=[model_output],
-    compute_target="cpu-cluster",
+    compute_target="pipe-action",
     source_directory=".",
     runconfig=ScriptRunConfig(source_directory=".", environment=env)
 )
@@ -46,7 +46,7 @@ test_step = PythonScriptStep(
     script_name="test.py",
     arguments=["--input", prepared_data, "--model_path", model_output],
     inputs=[prepared_data, model_output],
-    compute_target="cpu-cluster",
+    compute_target="pipe-action",
     source_directory=".",
     runconfig=ScriptRunConfig(source_directory=".", environment=env)
 )
