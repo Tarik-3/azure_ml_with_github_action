@@ -1,0 +1,9 @@
+pip
+setuptools
+wheel
+azureml-core
+azureml-pipeline
+azureml-pipeline-core
+azureml-pipeline-steps
+scikit-learn
+joblib

@@ -1,17 +1,32 @@
 import argparse
+from pathlib import Path
+
 import joblib
-from sklearn.linear_model import LinearRegression
+
+def _resolve_input_path(path_value: str, filename: str) -> Path:
+    # AzureML pipeline inputs can be a folder or a file
+    path = Path(path_value)
+    if path.suffix:
+        return path
+    return path / filename
+
+
+def _resolve_output_path(path_value: str, filename: str) -> Path:
+    # AzureML pipeline outputs are directories; pick a file name inside
+    path = Path(path_value)
+    if path.suffix:
+        return path
+    return path / filename
+
 
 def main(input_path, model_output):
-    # Load prepared data
-    X_train, X_test, y_train, y_test = joblib.load(input_path)
+    # Dummy train step for pipeline validation
+    print(f"Train step received input: {input_path}")
 
-    # Train simple linear regression
-    model = LinearRegression()
-    model.fit(X_train, y_train)
-
-    # Save model
-    joblib.dump(model, model_output)
+    # Save a placeholder model for the test step
+    output_file = _resolve_output_path(model_output, "model.pkl")
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump({"status": "ok", "message": "train complete"}, output_file)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
