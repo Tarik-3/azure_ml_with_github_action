@@ -1,0 +1,28 @@
+name: Azure ML Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install azureml-core azureml-pipeline scikit-learn joblib
+
+      - name: Run pipeline
+        env:
+          AZUREML_SUBSCRIPTION_ID: ${{ secrets.AZUREML_SUBSCRIPTION_ID }}
+          AZUREML_RESOURCE_GROUP: ${{ secrets.AZUREML_RESOURCE_GROUP }}
+          AZUREML_WORKSPACE_NAME: ${{ secrets.AZUREML_WORKSPACE_NAME }}
+        run: python pipeline.py
