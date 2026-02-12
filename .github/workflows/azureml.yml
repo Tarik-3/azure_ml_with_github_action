@@ -1,4 +1,4 @@
-name: Azure ML Pipeline
+name: ML Pipeline
 
 on:
   push:
@@ -21,9 +21,12 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run pipeline
-        env:
-          AZUREML_SUBSCRIPTION_ID: ${{ secrets.AZUREML_SUBSCRIPTION_ID }}
-          AZUREML_RESOURCE_GROUP: ${{ secrets.AZUREML_RESOURCE_GROUP }}
-          AZUREML_WORKSPACE_NAME: ${{ secrets.AZUREML_WORKSPACE_NAME }}
-          AZUREML_DATA_URI: ${{ secrets.AZUREML_DATA_URI }}
         run: python pipeline.py
+
+      - name: Upload outputs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: pipeline-outputs
+          path: outputs/
+          retention-days: 30
