@@ -1,9 +1,14 @@
+import os
 from azureml.core import Workspace, Experiment, Environment, ScriptRunConfig
 from azureml.pipeline.core import Pipeline, PipelineData
 from azureml.pipeline.steps import PythonScriptStep
 
-# Connect to workspace
-ws = Workspace.from_config()
+# Connect to workspace using secrets (environment variables)
+ws = Workspace(
+    subscription_id=os.environ["AZUREML_SUBSCRIPTION_ID"],
+    resource_group=os.environ["AZUREML_RESOURCE_GROUP"],
+    workspace_name=os.environ["AZUREML_WORKSPACE_NAME"]
+)
 
 # Define environment
 env = Environment.from_conda_specification(name="ml-env", file_path="environment.yml")
@@ -18,7 +23,7 @@ prep_step = PythonScriptStep(
     script_name="prep.py",
     arguments=["--output", prepared_data],
     outputs=[prepared_data],
-    compute_target="cpu-cluster",
+    compute_target="cpu-cluster",   # Make sure this compute cluster exists in your workspace
     source_directory=".",
     runconfig=ScriptRunConfig(source_directory=".", environment=env)
 )
